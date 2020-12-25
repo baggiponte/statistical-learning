@@ -4,8 +4,8 @@ author: "Luca Baggi"
 output:
   pdf_document:
     latex_engine: xelatex
-  beamer_presentation: default
-  html_notebook: default
+  html_document:
+    df_print: paged
 ---
 
 # Load the Libraries
@@ -175,6 +175,7 @@ lda_classifier %>%
   bind_cols(test_set) %>%
   metrics(truth = y, estimate = .pred_class)
 ```
+
 ## Confusion Matrix
 
 ```{r}
@@ -184,6 +185,7 @@ lda_classifier %>%
   conf_mat(y, .pred_class) %>%
   autoplot(type = 'heatmap')
 ```
+
 ## Let's visualise it once more
 
 Then, let's add a layer of complications to visualise how we plotted it, but only in 2D.
