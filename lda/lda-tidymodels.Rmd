@@ -1,0 +1,213 @@
+---
+title: "LDA but with TidyModels"
+author: "Luca Baggi"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  beamer_presentation: default
+  html_notebook: default
+---
+
+# Load the Libraries
+
+```{r, message = FALSE}
+library(tidymodels) # for data preprocessing
+library(discrim) # for the LDA
+library(MASS) # for the LDA
+library(ggplot2) # for plotting the distributions
+library(gridExtra)
+```
+
+# Load the data
+
+```{r}
+dir = '/Users/luca/OneDrive - Università degli Studi di Milano/uni/data-mining/lect/lect9/DFA_df.txt'
+
+data <- read.delim(dir, sep = ',') # load the data
+```
+Feature selection & factorisation of the response variable:
+
+```{r}
+  df <- data %>%
+  dplyr::select(-code) %>%
+  mutate(y = as.factor(y))
+```
+
+I cannot standardise the data before partitioning: that's data leakage!
+
+# Visualisations
+We need to check whether the data is normally distributed.
+
+```{r}
+hist1 <- ggplot(df, aes(x1)) +
+  geom_histogram() +
+  geom_vline(aes(xintercept = mean(x1))) +
+  geom_density()
+
+hist2 <- ggplot(df, aes(x2)) +
+  geom_histogram() +
+  geom_vline(aes(xintercept = mean(x2))) +
+  geom_density()
+
+hist3 <- ggplot(df, aes(x3)) +
+  geom_histogram() +
+  geom_vline(aes(xintercept = mean(x3))) +
+  geom_density()
+```
+
+## Let's plot them altogether
+
+```{r}
+grid.arrange(hist1, hist2, hist3)
+```
+
+# Partition the data 
+
+Create the split with `rsample`
+
+```{r}
+df_split <- initial_split(df, strata = y)
+```
+
+View the training and test sets:
+
+```{r, results = FALSE}
+df_split %>%
+  training() %>%
+  glimpse()
+
+df_split %>%
+  testing() %>%
+  glimpse()
+```
+
+# Data pre-processing
+
+## Specify the recipe
+
+```{r recipe}
+df_recipe <- training(df_split) %>%
+  recipe(y ~ .) %>% # write the formula
+  step_center(all_predictors()) %>% # center all predictors
+  step_scale(all_predictors()) %>%
+  prep()
+
+```
+
+## Obtain train and test data
+
+By `juicing` and `baking` the recipe:
+
+```{r split}
+train_set <- juice(df_recipe)
+
+test_set <- df_recipe %>%
+  bake(testing(df_split))
+```
+
+We can also display train and test set:
+
+```{r, results = FALSE}
+train_set
+test_set
+```
+
+## Train and test set plotting 
+
+Much better, we can plot the train and the test set!
+
+```{r}
+norm_1 <- train_set %>%
+  ggplot() +
+  geom_histogram(aes(x1), alpha = 1/2, fill = 'red')
+  
+norm_2 <- train_set %>%
+  ggplot() +
+  geom_histogram(aes(x2), alpha = 1/2, fill = 'blue')
+
+norm_3 <- train_set %>%
+  ggplot() +
+  geom_histogram(aes(x3), alpha = 1/2, fill = 'green')
+```
+
+And display them in a single plot:
+
+```{r train-plots}
+grid.arrange(norm_1, norm_2, norm_3)
+```
+X does not seem normally distributed. One should proceed with further statistical tests, such as the KS.
+
+# LDA Model Fitting
+
+Let's train the model:
+
+```{r}
+lda_classifier <- discrim_linear(mode = 'classification') %>%
+  set_engine('MASS') %>%
+  fit(y ~ ., data = train_set)
+```
+
+# Prediction
+
+Then let's predict!
+
+```{r}
+lda_classifier %>%
+  predict(test_set) %>%
+  bind_cols(test_set) %>%
+  glimpse()
+```
+
+`Tidymodels` will create the colums `.pred_class`: that is our prediction.
+
+# Model Validation
+
+```{r}
+lda_classifier %>%
+  predict(test_set) %>%
+  bind_cols(test_set) %>%
+  metrics(truth = y, estimate = .pred_class)
+```
+## Confusion Matrix
+
+```{r}
+lda_classifier %>%
+  predict(test_set) %>%
+  bind_cols(test_set) %>%
+  conf_mat(y, .pred_class) %>%
+  autoplot(type = 'heatmap')
+```
+## Let's visualise it once more
+
+Then, let's add a layer of complications to visualise how we plotted it:
+
+
+```{r}
+test_set <- lda_classifier %>%
+  predict(test_set) %>%
+  bind_cols(test_set)
+
+test_set %>%
+  mutate(true_v_predicted = paste(test_set$y, test_set$.pred_class, sep = ',')) %>%
+  ggplot() +
+  geom_point(aes(x1, x2, col = true_v_predicted))
+```
+
+## Per-classifier metrics
+
+We can obtain the metrics for each class by simply specifying a different argument in `predict`:
+
+```{r}
+lda_probs <- lda_classifier %>%
+  predict(test_set, type = 'prob') %>%
+  bind_cols(test_set)
+```
+
+And we can immediately plot some curves:
+
+```{r}
+lda_probs %>%
+  roc_curve(y, .pred_1:.pred_3) %>%
+  autoplot()
+```
+
