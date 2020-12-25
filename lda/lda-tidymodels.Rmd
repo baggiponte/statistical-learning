@@ -209,7 +209,8 @@ We can obtain the metrics for each class by simply specifying a different argume
 ```{r}
 lda_probs <- lda_classifier %>%
   predict(test_set, type = 'prob') %>%
-  bind_cols(test_set)
+  bind_cols(test_set) %>%
+  glimpse()
 ```
 
 And we can immediately plot some curves:
