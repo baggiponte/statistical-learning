@@ -18,10 +18,17 @@ library(ggplot2) # for plotting the distributions
 library(gridExtra)
 ```
 
+Set the seed:
+
+```{r}
+set.seed(42)
+```
+
+
 # Load the data
 
 ```{r}
-dir = '/Users/luca/OneDrive - Università degli Studi di Milano/uni/data-mining/lect/lect9/DFA_df.txt'
+dir = 'data/DFA_df.txt'
 
 data <- read.delim(dir, sep = ',') # load the data
 ```
@@ -179,7 +186,7 @@ lda_classifier %>%
 ```
 ## Let's visualise it once more
 
-Then, let's add a layer of complications to visualise how we plotted it:
+Then, let's add a layer of complications to visualise how we plotted it, but only in 2D.
 
 
 ```{r}
