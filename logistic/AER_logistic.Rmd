@@ -1,0 +1,166 @@
+---
+title: "Logistic Regression"
+author: 'Luca Baggi'
+output: html_notebook
+---
+# Load packages
+
+```{r packages, message = FALSE}
+library(tidymodels)
+library(AER)
+```
+Also, set seed!
+
+```{r}
+set.seed(42)
+```
+
+# Load data
+
+```{r data}
+data('SwissLabor')
+summary(SwissLabor)
+```
+
+See the levels:
+
+```{r levels}
+levels(SwissLabor$participation)
+```
+
+# Partition the data
+
+As done before, using `rsample`:
+
+```{r}
+labour_split <- initial_split(SwissLabor) # standard prop is 3/4
+```
+
+And create the recipes:
+
+```{r recipe}
+labour_recipe <- training(labour_split) %>%
+  recipe(participation ~ .) %>%
+  # we do not center predictors
+  prep() 
+```
+
+And `juice` and `bake` the train and test dataset:
+
+```{r train-test-set}
+train_set <- juice(labour_recipe)
+
+test_set <- labour_recipe %>%
+  bake(testing(labour_split))
+```
+
+# Model Fitting
+
+## Linear Regression
+
+This won't work! 
+
+```{r}
+linear_model <- lm(participation ~ ., data = SwissLabor) %>%
+  summary()
+```
+
+And so won't any other `lm` or `glm` model, as the response variable is not numeric.
+
+```{r standard-lm}
+linear_regression <- linear_reg(mode = 'regression') %>%
+  set_engine('lm') %>%
+  fit(participation ~ ., data = train_set)
+```
+
+## Logistic regression
+
+### Using GLM
+
+From the [documentation](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/family) of the `glm` command:
+
+> the binomial family the links logit, probit, cauchit, (corresponding to logistic, normal and Cauchy CDFs respectively) log and cloglog (complementary log-log);
+
+```{r}
+logistic_model <- glm(participation ~ ., data = SwissLabor, binomial(link = "logit"))
+summary(logistic_model)
+```
+### Using `tidymodels` & `parsnip`
+
+The section before only prints out estimates, which are useful in an econometric setting but not in a predictive one. So let's use the `tidymodels` framework!
+
+There is no need to specify the mode, as the default for `logistic_reg()` is `mode = 'classification'`. See the [docs](https://parsnip.tidymodels.org/reference/logistic_reg.html)
+
+```{r}
+logistic_regression <- logistic_reg() %>%
+  set_engine('glm') %>%
+  fit(participation ~ ., data = train_set)
+```
+
+One could also write the following when a `mode` is to be specified.
+
+```
+logistic_regression <- logistic_reg() %>%
+  set_engine('glm') %>%
+  set_mode('classifier') %>%
+  fit(...)
+```
+
+# Predictions
+
+Let's predict the classes of `test_set`:
+
+```{r}
+logistic_regression %>%
+  predict(test_set) %>%
+  bind_cols(test_set) %>%
+  glimpse()
+```
+
+# Model Validation
+
+## General metrics
+
+```{r}
+logistic_regression %>%
+  predict(test_set) %>%
+  bind_cols(test_set) %>%
+  metrics(truth = participation, estimate = .pred_class)
+```
+
+The accuracy is pretty low!
+
+### Confusion Matrix
+
+```{r}
+logistic_regression %>%
+  predict(test_set) %>%
+  bind_cols(test_set) %>%
+  conf_mat(participation, .pred_class) %>%
+  autoplot(type = 'heatmap')
+```
+
+## Per-classifier metrics
+
+Let's predict the probabilities for each class and assign the resulting data to a new variable:
+
+```{r}
+predicted_probs <- logistic_regression %>%
+  predict(test_set, type = 'prob') %>%
+  bind_cols(test_set) %>%
+  glimpse()
+```
+
+And then compute the ROC curve:
+
+```{r}
+predicted_probs %>%
+  # unnecessary, but cool: 
+  # mutate(participation = as.factor(dplyr::recode(participation, no = 0, yes = 1))) %>%
+  roc_curve(participation, .pred_no) %>%
+  autoplot()
+```
+
+Note: there is no need to specify the full range `.pred_no:.pred_yes` as the metric is binary. Indeed, `yardstick`, the package doing all of the metrics within `tidyverse`, signals error if you attempt to do so.
+
+Not much to say: the model is pretty bad with only these features! What could be done to improve it? Perhaps adding a time dimension?
