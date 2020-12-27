@@ -1,0 +1,235 @@
+---
+title: "Vanilla KNN"
+author: 'Luca Baggi'
+output: html_notebook
+---
+
+# Load packages
+
+```{r}
+# for knn
+library(class)
+```
+
+# Load data
+
+We are using an artificial dataset from the book [The Elements of Statistical Learning](http://doi.org/10.1007/978-0-387-84858-7). Data should have been available via the package [ElemStatLearn](https://cran.r-project.org/web/packages/ElemStatLearn/index.html), which is now removed from the CRAN. However, it can still be accessed via [this](https://web.stanford.edu/~hastie/ElemStatLearn/) link. The documentation of the data is [here](https://web.stanford.edu/~hastie/ElemStatLearn/).
+
+```{r}
+load('esl-mixture.rda')
+
+x <- ESL.mixture$x
+y <- ESL.mixture$y
+```
+
+
+`x` is a matrix with two columns while `y` is just a series of values.
+
+Let's see the class balance and the values taken by `y`:
+
+```{r}
+prop.table(table(y))
+```
+
+# Plotting
+
+A bit sad but it does its job!
+
+```{r}
+plot(
+  # x var, y var
+  x[,1], x[,2],
+  # colors
+  col = ifelse(y == 1, 'coral', 'cornflowerblue'),
+  # labels
+  main = 'x distribution according to y',
+  xlab = 'x1',
+  ylab = 'x2'
+  )
+```
+
+## Pure flex
+
+Because we like it the `tidy` style:
+
+```{r, message=FALSE}
+library(tidyverse)
+```
+
+```{r}
+data <-
+  # select the matrix x in ESL.mixture
+  ESL.mixture$x %>%
+  # turn it into a tibble
+  as_tibble() %>%
+  # and attach to it the following column:
+  bind_cols(
+    # select y from ESL.mixture and turn it into a tibble
+    ESL.mixture$y %>% as_tibble() %>%
+      # make sure to transform it into a factor!
+      mutate(value = as.factor(value))
+  )
+
+data <- data %>%
+  rename(
+    x1 = V1,
+    x2 = V2,
+    y = value
+  )
+  
+data %>%
+  ggplot(aes(x1, x2, col = y)) +
+  geom_point()
+  
+```
+
+# Training a model with KNN
+
+The package `class` offers a `knn` method for training the model. Let's extract the test data (we cannot add it to our dataset as they have very different sizes).
+
+```{r}
+
+new_data <-
+  ESL.mixture$xnew %>%
+    as_tibble() %>%
+    rename(
+      new_x1 = x1,
+      new_x2 = x2,
+    )
+
+new_data %>% glimpse()
+```
+
+Which contains 6831 observations for each of the two variables `x1` and `x2`. This is the data to be fitted by the model:
+
+```{r}
+set.seed(42)
+
+model_knn <- knn(
+ # train data: the data, without they column
+ train = data %>% select(-y),
+ # test data
+ test = new_data,
+ # factor of classification:
+ cl = y,
+ # neighbours
+ k = 15,
+ # return proportion of votes as the attribute 'prop'
+ prob = TRUE
+)
+
+model_knn %>%
+  glimpse()
+
+```
+
+# Predictions
+
+That's a really uncomfortable way to store the results of the model! Let's try something else. We use the `pred_y` to be consistent with `tidymodels` syntax:
+
+```{r}
+# this should extract the predicted classes
+pred_y <-
+  model_knn %>%
+  as_tibble() %>%
+  rename(.pred_y = value)
+```
+
+
+With `attr(<model_name>, 'prob')` we can extract the probabilities associated to each class:
+
+```{r}
+# and this the associated probabilities:
+pred_probabilities <-
+  attr(model_knn, 'prob') %>%
+  as_tibble() %>%
+  rename(.pred_prob = value)
+```
+
+The final data should then be:
+
+```{r}
+pred_knn <-
+  pred_y %>%
+  bind_cols(pred_probabilities)
+
+pred_knn
+```
+
+However, there seems to be a problem: to which class is `.pred_prob` referred to?
+
+```{r}
+pred_knn %>%
+  filter(.pred_y == 1)
+```
+
+This is a bit problematic: the `.pred_prob` column indicates the predicted probability of *that* class. As `tidymodels` paradigm suggests, it might be better to split the column in two and report the predicted probabilities as separate values.
+
+```{r}
+predictions_knn <-
+  pred_knn %>%
+  mutate(
+    .pred_1 = ifelse(.pred_y == 1, .pred_prob, 1 - .pred_prob),
+    .pred_0 = ifelse(.pred_y == 0, .pred_prob, 1 - .pred_prob)
+  ) %>%
+  select(-.pred_prob)
+
+predictions_knn
+```
+
+Normally, we would proceed with `yardstick` to evaluate the performance of the model... if only we had the test data's classes!
+
+# More plotting
+
+The `ESL.mixture` contains the lattice points coordinates, i.e. the coordinates of the backgound layer with all of the dots, and create the corresponding grid:
+
+```{r}
+# coordinates
+px1 <- ESL.mixture$px1 # length is 69
+px2 <- ESL.mixture$px2 # length is 99
+
+# grid
+lattice_grid <- expand.grid(x = px1, y = px2)
+```
+
+We can then transform our predictions into a matrix with the same size as the dimensions specified by the lengths of the lattice points' grid. In this way, we will plot the predicted classes' probabilities.
+
+The object we want to draw is a sort of heat map, with red dots if a point has been assigned to 1, else blue. This means that we want to color code the probability of assigning that class using a threshold. To do so, we will need to create a column via an `ifelse()` condition:
+
+```
+ifelse(.pred_y == 1, .pred_prob, 1 - .pred_prob)
+```
+
+The trick here is just taking the `.pred_1` column and transform it into a matrix with the lattice grid:
+
+```{r}
+matrix_knn <-
+  matrix(predictions_knn$.pred_1,
+         # just recall that len() is a python function: R uses length()
+         length(px1),
+         length(px2)
+         )
+```
+
+To make a plot out of this without `ggplot()` requires intense googling of unexplicative parameters:
+
+```{r}
+# my guess: parameters(margins = < 2 from each side >)
+par(mar = rep(2,4))
+# contour line
+contour(px1, px2, matrix_knn, levels=0.5,
+        main = "15-nearest neighbours", axes=FALSE)
+# add points
+points(x, col=ifelse(y==1, "coral", "cornflowerblue"))
+# add grid
+points(lattice_grid,
+       # the point symbol is pch (WTF?!)
+       pch=".",
+       # googled it, this is Character Expansion Ratio (...)
+       cex=1.2,
+       col=ifelse(predictions_knn$.pred_1 > 0.5, "coral", "cornflowerblue"))
+# final command to plot a box out of this
+box()
+```
+
+
